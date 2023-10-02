@@ -1,0 +1,18 @@
+version: '3.4'
+
+services:
+  aggregationapp:
+    image: ${DOCKER_REGISTRY-}aggregationapp
+    build:
+      context: .
+      dockerfile: AggregationApp/Dockerfile
+
+  postgrescontainer:
+    container_name: postgrescontainer
+    image: postgres:latest
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=sa  
+      - POSTGRES_PASSWORD=KibiraAs716C54?!a
+      - POSTGRES_DB=ElectricityData
