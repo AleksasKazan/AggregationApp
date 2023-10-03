@@ -37,7 +37,7 @@ namespace Domain.Services.Tests
 
             var aggregatedData = TestData.AggregatedDataList;
 
-            _csvRepositoryMock.Setup(repo => repo.DownloadCsvFilesAsync())
+            _csvRepositoryMock.Setup(repo => repo.DownloadCsvFiles())
                 .ReturnsAsync(csvFiles);
             _csvRepositoryMock.Setup(repo => repo.RemoveOldCsvFile())
                 .Returns(csvFiles);
@@ -57,7 +57,7 @@ namespace Domain.Services.Tests
         public async Task SaveAggregatedData_Exception()
         {
             // Arrange
-            _csvRepositoryMock.Setup(repo => repo.DownloadCsvFilesAsync())
+            _csvRepositoryMock.Setup(repo => repo.DownloadCsvFiles())
                 .ThrowsAsync(new Exception("Test exception"));
 
             // Act and Assert

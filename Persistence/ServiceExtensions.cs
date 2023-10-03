@@ -1,7 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Persistence.Repositories;
 
 namespace Persistence
@@ -18,14 +17,7 @@ namespace Persistence
         {
             return services
                 .AddScoped<IPostgresRepository, PostgresRepository>()
-                .AddSingleton<ICsvRepository>(provider =>
-                {
-                    var logger = provider.GetRequiredService<ILogger<CsvRepository>>();
-                    var baseUrl = configuration["ElectricityDataSource:BaseUrl"];
-                    var datasetUrl = baseUrl + configuration["ElectricityDataSource:DatasetUrl"];
-
-                    return new CsvRepository(logger, baseUrl!, datasetUrl);
-                })
+                .AddScoped<ICsvRepository, CsvRepository>()
                 .AddDbContext<AggregationDbContext>(options =>
                 {
                     options.UseNpgsql(

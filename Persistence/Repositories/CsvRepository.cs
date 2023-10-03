@@ -2,6 +2,7 @@
 using CsvHelper;
 using CsvHelper.Configuration;
 using HtmlAgilityPack;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -10,69 +11,41 @@ namespace Persistence.Repositories
 {
     public class CsvRepository : ICsvRepository
     {
-        private readonly ILogger<CsvRepository> _logger;
+        private readonly ILogger<CsvRepository> _logger;       
+        private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IConfiguration _configuration;
         private readonly string _baseUrl;
         private readonly string _datasetUrl;
         private const string DownloadsFolder = "Downloads";
 
         public CsvRepository(
-            ILogger<CsvRepository> logger, 
-            string baseUrl,
-            string datasetUrl)
+            ILogger<CsvRepository> logger,
+            IHttpClientFactory httpClientFactory,
+            IConfiguration configuration)
         {
             _logger = logger;
-            _baseUrl = baseUrl;
-            _datasetUrl = datasetUrl;
+            _httpClientFactory = httpClientFactory;
+            _configuration = configuration;
+            _baseUrl = _configuration["ElectricityDataSource:BaseUrl"]!;
+            _datasetUrl = _baseUrl + _configuration["ElectricityDataSource:DatasetUrl"];
         }
-  
-        public List<string> RemoveOldCsvFile()
+       
+        public async Task<List<string>> DownloadCsvFiles()
         {
-            var allFiles = Directory.GetFiles(DownloadsFolder);
-            if (allFiles.Length > 2)
-            {
-                string firstFile = allFiles.FirstOrDefault()!;
-                File.Delete(firstFile);
-            }
-            
-            return Directory.GetFiles(DownloadsFolder).ToList();
-        }
-
-        public async Task<List<string>> DownloadCsvFilesAsync()
-        {
-            using var client = new HttpClient();
             try
             {
-                HttpResponseMessage response = await client.GetAsync(_datasetUrl);
+                var csvPaths = await GetCsvPathsAsync();
 
-                if (response.IsSuccessStatusCode)
+                if (csvPaths.Any())
                 {
-                    string htmlContent = await response.Content.ReadAsStringAsync();
-                    var htmlDocument = new HtmlDocument();
-                    htmlDocument.LoadHtml(htmlContent);
+                    var filteredCsvPaths = csvPaths
+                        .Where(IsValidCsvPath)
+                        .TakeLast(2)
+                        .ToList();
 
-                    var csvLinks = htmlDocument.DocumentNode.SelectNodes("//a[contains(@class, 'button') and contains(text(), 'Atsisiųsti')]");
+                    var savedCsvFiles = await DownloadCsvFilesAsync(filteredCsvPaths);
 
-                    if (csvLinks != null)
-                    {
-                        var csvPaths = csvLinks.Select(link => link.GetAttributeValue("href", ""));
-
-                        var filteredCsvPaths = csvPaths
-                            .Where(ValidateCsvPath)
-                            .TakeLast(2)
-                            .ToList();
-
-                        var csvFilesToDownload = await DownloadCsvFilesAsync(client, filteredCsvPaths);
-
-                        return csvFilesToDownload;
-                    }
-                    else
-                    {
-                        _logger.LogWarning($"No CSV links found on the webpage.");
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning($"Failed to retrieve the webpage. Status code: {response.StatusCode}");
+                    return savedCsvFiles;
                 }
             }
             catch (HttpRequestException ex)
@@ -81,7 +54,19 @@ namespace Persistence.Repositories
             }
 
             return new List<string>();
-        }      
+        }
+
+        public List<string> RemoveOldCsvFile()
+        {
+            var allFiles = Directory.GetFiles(DownloadsFolder);
+            if (allFiles.Length > 2)
+            {
+                string firstFile = allFiles.FirstOrDefault()!;
+                File.Delete(firstFile);
+            }
+
+            return Directory.GetFiles(DownloadsFolder).ToList();
+        }
 
         public List<ElectricityData> ParseCsv(List<string> csvFilePaths)
         {
@@ -94,7 +79,7 @@ namespace Persistence.Repositories
                     using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
                     csv.Context.RegisterClassMap<ElectricityDataMap>();
 
-                    if (ValidateCsvPath(csvFilePath))
+                    if (IsValidCsvPath(csvFilePath))
                     {
 
                         electricityData.AddRange(
@@ -113,14 +98,45 @@ namespace Persistence.Repositories
                 }
             }
             return electricityData;
-        }     
+        }
 
-        private async Task<List<string>> DownloadCsvFilesAsync(HttpClient client, List<string> csvPaths)
+        private async Task<IEnumerable<string>> GetCsvPathsAsync()
         {
-            var csvFilesToDownload = new List<string>();
+            using var client = _httpClientFactory.CreateClient();
+            HttpResponseMessage response = await client.GetAsync(_datasetUrl);
+
+            if (response.IsSuccessStatusCode)
+            {
+                string htmlContent = await response.Content.ReadAsStringAsync();
+                var htmlDocument = new HtmlDocument();
+                htmlDocument.LoadHtml(htmlContent);
+
+                var csvLinks = htmlDocument.DocumentNode.SelectNodes("//a[contains(@class, 'button') and contains(text(), 'Atsisiųsti')]");
+
+                if (csvLinks != null)
+                {
+                    return csvLinks.Select(link => link.GetAttributeValue("href", ""));
+                }
+                else
+                {
+                    _logger.LogWarning("No CSV links found on the webpage.");
+                }
+            }
+            else
+            {
+                _logger.LogWarning($"Failed to retrieve the webpage. Status code: {response.StatusCode}");
+            }
+
+            return Enumerable.Empty<string>();
+        }
+
+        private async Task<List<string>> DownloadCsvFilesAsync(List<string> csvPaths)
+        {
+            var savedCsvFiles = new List<string>();
 
             foreach (var csvPath in csvPaths)
             {
+                using var client = _httpClientFactory.CreateClient();
                 var csvUrl = new Uri(new Uri(_baseUrl), csvPath).AbsoluteUri;
                 string csvFilePath = Path.Combine(DownloadsFolder, Path.GetFileName(new Uri(csvPath).LocalPath));
 
@@ -133,7 +149,7 @@ namespace Persistence.Repositories
                         if (csvResponse.IsSuccessStatusCode)
                         {
                             csvFilePath = await SaveCsvFile(csvResponse, csvFilePath);
-                            csvFilesToDownload.Add(csvFilePath);
+                            savedCsvFiles.Add(csvFilePath);
                         }
                         else
                         {
@@ -147,7 +163,7 @@ namespace Persistence.Repositories
                 }
             }
 
-            return csvFilesToDownload;
+            return savedCsvFiles;
         }
 
         private async Task<string> SaveCsvFile(HttpResponseMessage csvResponse, string csvFilePath)
@@ -176,7 +192,7 @@ namespace Persistence.Repositories
             }
         }
 
-        private static bool ValidateCsvPath(string csvPath)
+        private static bool IsValidCsvPath(string csvPath)
         {
             var pathSegments = csvPath.Split('.');
 

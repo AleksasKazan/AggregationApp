@@ -26,7 +26,7 @@ namespace Domain.Services
         {
             try
             {
-                var csvFiles = await _csvRepository.DownloadCsvFilesAsync();
+                var csvFiles = await _csvRepository.DownloadCsvFiles();
                 if (csvFiles.Any())
                 {
                     csvFiles = _csvRepository.RemoveOldCsvFile();
